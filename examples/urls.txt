@@ -1,0 +1,12 @@
+# URLs whose crawlability matters; used by `diff --urls-file` and `test --urls-file`.
+https://shop.example.com/
+https://shop.example.com/category/shoes
+https://shop.example.com/category/shoes?filter=red
+https://shop.example.com/category/shoes?sort=price
+https://shop.example.com/product/blue-widget
+https://shop.example.com/product/blue-widget?sessionid=abc123
+https://shop.example.com/search?q=widget
+https://shop.example.com/cart
+https://shop.example.com/checkout/step-1
+https://shop.example.com/account/login
+https://shop.example.com/account/orders

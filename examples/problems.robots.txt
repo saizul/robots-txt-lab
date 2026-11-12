@@ -1,0 +1,16 @@
+Disallow: /tmp/
+User-Agent: *
+Disallow: /wp-includes/
+Disallow: /wp-content/plugins/
+Disallow: /Admin/
+Disallow: private
+Crawl-delay: 10
+Noindex: /thank-you
+Dissallow: /old/
+Host: example.com
+
+User-agent: Googlebot
+Disallow: /
+
+Sitemap: /sitemap.xml
+Sitemap: https://example.com/sitemap.xml#main

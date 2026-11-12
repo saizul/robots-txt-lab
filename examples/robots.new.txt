@@ -1,0 +1,23 @@
+# robots.txt for https://shop.example.com (proposed change)
+
+User-agent: *
+Disallow: /cart
+Disallow: /checkout/
+Disallow: /account/
+Disallow: /search
+Disallow: /*?sort=
+Disallow: /*?*sessionid=
+Disallow: /*?filter=
+Allow: /account/login
+
+User-agent: Googlebot
+Disallow: /checkout/
+Disallow: /account/
+Disallow: /*?filter=
+Allow: /account/login
+
+User-agent: GPTBot
+User-agent: CCBot
+Disallow: /
+
+Sitemap: https://shop.example.com/sitemap_index.xml

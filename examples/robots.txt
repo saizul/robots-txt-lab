@@ -1,0 +1,25 @@
+# robots.txt for https://shop.example.com
+# Keep cart, checkout, account and internal search out of the crawl.
+
+User-agent: *
+Disallow: /cart
+Disallow: /checkout/
+Disallow: /account/
+Disallow: /search
+Disallow: /*?sort=
+Disallow: /*?*sessionid=
+Allow: /account/login
+
+# Google may crawl everything above except checkout and account pages,
+# and also the faceted category pages.
+User-agent: Googlebot
+Disallow: /checkout/
+Disallow: /account/
+Allow: /account/login
+
+User-agent: GPTBot
+User-agent: CCBot
+Disallow: /
+
+Sitemap: https://shop.example.com/sitemap_index.xml
+Sitemap: https://shop.example.com/sitemap-products.xml

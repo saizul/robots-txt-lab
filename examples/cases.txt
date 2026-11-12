@@ -1,0 +1,11 @@
+# <allow|disallow> <url> [user agent]   (default user agent: Googlebot)
+allow    https://shop.example.com/
+allow    https://shop.example.com/product/blue-widget
+allow    https://shop.example.com/account/login
+disallow https://shop.example.com/checkout/step-1
+disallow https://shop.example.com/account/orders
+allow    https://shop.example.com/search?q=widget
+disallow https://shop.example.com/search?q=widget       Bingbot
+disallow https://shop.example.com/category/shoes?sort=price   Bingbot
+disallow https://shop.example.com/product/blue-widget   GPTBot
+allow    https://shop.example.com/robots.txt            GPTBot
