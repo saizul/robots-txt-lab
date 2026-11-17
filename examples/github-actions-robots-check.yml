@@ -1,6 +1,7 @@
 # Copy to .github/workflows/robots-txt.yml in the repository that holds your
 # site's robots.txt (here assumed at public/robots.txt). On every pull request
-# that touches it, the job lints the new file, checks the expectations in
+# that touches it, the job lints the new file (issues show up as annotations
+# on the pull request), checks the expectations in
 # robots-cases.txt and lists URLs whose verdict changes against main.
 name: robots.txt
 
@@ -23,9 +24,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install "git+https://github.com/saizul/robots-txt-lab@v0.1.0"
+      - run: pip install "git+https://github.com/saizul/robots-txt-lab@main"
       - name: Lint
-        run: robots-txt-lab lint public/robots.txt --fail-on error
+        run: robots-txt-lab lint public/robots.txt --fail-on error --format github
       - name: Expectations
         run: robots-txt-lab test public/robots.txt --cases robots-cases.txt
       - name: Verdict changes against main

@@ -19,7 +19,7 @@ Allow: /account/login
 
 User-agent: GPTBot
 User-agent: CCBot
-Disallow: /
+Disallow: /   # intentional: robots-txt-lab: disable=blocks-entire-site
 
 Sitemap: https://shop.example.com/sitemap_index.xml
 Sitemap: https://shop.example.com/sitemap-products.xml

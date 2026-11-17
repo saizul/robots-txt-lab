@@ -48,9 +48,13 @@ It is a command-line tool and a Python library with **no runtime dependencies** 
   handled as any other 4xx.
 - **Verdicts with reasons**: the deciding rule and its line, the group used, the normalised path, and why (no group,
   no matching rule, unavailable, unreachable).
-- **Linter** with 39 checks, including unknown directives, `crawl-delay` (ignored by Google), `noindex`, rules outside
+- **Linter** with 41 checks, including unknown directives, `crawl-delay` (ignored by Google), `noindex`, rules outside
   a group, blocking the whole site, blocking CSS and JavaScript, sitemap URL problems, BOM, size limit, non-UTF-8
   content, HTML served as robots.txt, field name case, case-sensitive paths, conflicting and duplicate rules.
+- **Inline suppressions**: accept a lint issue on purpose with a `# robots-txt-lab: disable=CODE` comment right where
+  it happens; crawlers ignore comments, so the file behaves exactly the same.
+- **CI-friendly lint output**: SARIF 2.1.0 for GitHub code scanning and other SARIF viewers, and GitHub Actions
+  annotations that show up on the changed lines of a pull request.
 - **Diff** two versions: added and removed rules per group, sitemap changes, and every test URL and user agent whose
   verdict flips. Without a URL list, probe URLs are derived from the rules of both files.
 - **Fetch** a live robots.txt with redirect, status and size handling, then test, lint or save it.
@@ -134,6 +138,52 @@ examples/problems.robots.txt:7: warning: crawl-delay is ignored by Google (Bing 
 | `--fail-on SEVERITY`    | exit 1 when an issue of `error` (default), `warning` or `info` or worse is found; `never` to always exit 0 |
 | `--ignore CODES`        | comma-separated issue codes to skip, repeatable                         |
 | `--robots-url URL`      | where the file is served, for the sitemap host checks (automatic for URLs) |
+| `--format FORMAT`       | `text` (default), `json`, `sarif` or `github`, see [CI output](#ci-output) |
+| `--no-inline-ignores`   | report issues even when an inline comment suppresses them               |
+| `--list-checks`         | print every check code with its default severity and a description, then exit |
+
+#### Inline suppressions
+
+Some findings are intentional: a staging host that really should block everything, a `Crawl-delay` kept for Bing.
+Instead of turning a check off for every file with `--ignore`, mark the line in robots.txt itself:
+
+```text
+# robots-txt-lab: disable-file=bom
+User-agent: *
+Disallow: /wp-includes/   # robots-txt-lab: disable=blocks-resources
+
+User-agent: bingbot
+# robots-txt-lab: disable-next-line=crawl-delay-ignored
+Crawl-delay: 5
+```
+
+| Comment                                   | Silences                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------ |
+| `# robots-txt-lab: disable=CODES`         | the listed codes on the same line                                        |
+| `# robots-txt-lab: disable-next-line=CODES` | the listed codes on the next line that is not blank or a comment       |
+| `# robots-txt-lab: disable-file=CODES`    | the listed codes anywhere in the file, including issues without a line (`size-near-limit`) |
+
+`CODES` is a comma-separated list of check codes (see `robots-txt-lab lint --list-checks`), or `all`. The marker is
+case-insensitive and `=` may be replaced by a space. Suppressed issues do not count for `--fail-on`; the text summary
+shows how many were suppressed, JSON lists them under `suppressed`, and SARIF reports them with an `inSource`
+suppression so code scanning shows them as dismissed. A comment that silences nothing is reported as
+`unused-suppression` (info), and one that cannot be read or names an unknown code as `invalid-suppression` (warning);
+those two are never suppressed by comments. `--no-inline-ignores` reports everything, for an audit.
+
+#### CI output
+
+```console
+$ robots-txt-lab lint public/robots.txt --format github
+::error file=public/robots.txt,line=13,title=robots-txt-lab blocks-entire-site::disallow: / blocks the entire site for Googlebot (hint: Intended for a staging site? Remove it before launch.)
+$ robots-txt-lab lint public/robots.txt --format sarif > robots-txt.sarif
+```
+
+`--format github` prints [workflow commands](https://docs.github.com/actions/reference/workflow-commands-for-github-actions)
+(`::error`, `::warning`, `::notice` for info), so issues appear as annotations on the pull request. `--format sarif`
+writes a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) log with one rule per check
+code; upload it with `github/codeql-action/upload-sarif` as in
+[`examples/github-code-scanning.yml`](examples/github-code-scanning.yml). File paths are written relative, as given on
+the command line, so run the command from the repository root. The exit code follows `--fail-on` in every format.
 
 ### diff
 
@@ -256,6 +306,7 @@ changes = diff(robots, Robots.from_text(new_text), ["/a", "/b?c=1"], ["Googlebot
 | `html-content`           | error      | the file looks like an HTML page                                              |
 | `size-limit`             | error      | larger than 500 KiB; the rest is ignored                                      |
 | `sitemap-not-absolute`, `sitemap-bad-scheme`, `sitemap-invalid-url`, `sitemap-empty` | error | unusable sitemap lines |
+| `invalid-suppression`    | warning    | a `# robots-txt-lab:` comment that cannot be read or names an unknown check   |
 | `blocks-resources`       | warning    | rules that block CSS or JavaScript for Googlebot or the `*` group             |
 | `crawl-delay-ignored`    | warning    | `crawl-delay`, which Google ignores                                           |
 | `noindex-unsupported`    | warning    | `noindex` in robots.txt, unsupported by Google since September 2019           |
@@ -266,15 +317,16 @@ changes = diff(robots, Robots.from_text(new_text), ["/a", "/b?c=1"], ["Googlebot
 | `dollar-not-at-end`      | warning    | `$` in the middle of a pattern, which is literal                              |
 | `conflicting-rules`      | warning    | allow and disallow for the same path                                          |
 | `not-utf8`, `size-near-limit`, `sitemap-hash`, `sitemap-scheme-mismatch` | warning | encoding, size and sitemap URL problems |
-| `bom`, `directive-case`, `path-case`, `user-agent-token`, `empty-group`, `empty-rule`, `duplicate-rule`, `redundant-wildcard`, `robots-txt-disallowed`, `host-directive`, `clean-param-directive`, `sitemap-duplicate`, `sitemap-cross-host`, `no-groups` | info | worth knowing, rarely wrong |
+| `bom`, `directive-case`, `path-case`, `user-agent-token`, `empty-group`, `empty-rule`, `duplicate-rule`, `redundant-wildcard`, `robots-txt-disallowed`, `host-directive`, `clean-param-directive`, `sitemap-duplicate`, `sitemap-cross-host`, `no-groups`, `unused-suppression` | info | worth knowing, rarely wrong |
 
 ## Examples
 
 [`examples/`](examples/) has a realistic shop robots.txt, a proposed change to it, a URL list, an expectations file,
-a file full of problems for the linter, a library script, and
+a file full of problems for the linter, a library script,
 [`github-actions-robots-check.yml`](examples/github-actions-robots-check.yml): a workflow that lints the robots.txt of
-your site on every pull request, checks your expectations, and writes the verdict changes against the base branch to
-the job summary.
+your site on every pull request with inline annotations, checks your expectations, and writes the verdict changes
+against the base branch to the job summary, and [`github-code-scanning.yml`](examples/github-code-scanning.yml),
+which uploads the lint results to GitHub code scanning as SARIF.
 
 ## Testing
 
@@ -285,10 +337,10 @@ $ ruff check . && ruff format --check .
 $ pytest
 ```
 
-The suite (383 tests) includes every example from RFC 9309 (sections 2.2.1 to 2.2.4 and 5) and from Google's robots.txt
+The suite (418 tests) includes every example from RFC 9309 (sections 2.2.1 to 2.2.4 and 5) and from Google's robots.txt
 specification page: the user-agent precedence table, rule grouping, the wildcard path table, the rule precedence
 table and the robots.txt URL validity table. Tests never touch the network; fetching uses a fake transport. CI runs
-lint, the tests on Python 3.9 to 3.13, a CLI smoke test and a Docker build.
+lint, the tests on Python 3.10 to 3.13, a CLI smoke test and a Docker build.
 
 ## Limitations
 
