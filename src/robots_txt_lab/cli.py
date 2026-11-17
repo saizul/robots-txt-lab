@@ -9,11 +9,14 @@ from typing import Callable, List, Optional, Sequence, TextIO, Tuple
 from ._version import __version__
 from .diff import DEFAULT_AGENTS, diff
 from .fetch import Transport, fetch
-from .lint import SEVERITIES, at_or_above, lint
+from .lint import SEVERITIES, at_or_above, lint, lint_report
 from .output import (
     envelope,
+    render_checks_text,
     render_diff_text,
     render_fetch_text,
+    render_lint_github,
+    render_lint_sarif,
     render_lint_text,
     render_sitemaps_text,
     render_test_text,
@@ -136,17 +139,42 @@ def cmd_test(args: argparse.Namespace, ctx: Context) -> int:
 
 
 def cmd_lint(args: argparse.Namespace, ctx: Context) -> int:
+    if args.list_checks:
+        ctx.stdout.write(render_checks_text())
+        return EXIT_OK
+    if not args.robots:
+        raise CliError("lint needs a robots.txt file, '-' or a URL")
     robots, url = load_robots(args.robots, args, ctx)
     if robots.access != "parsed":
         raise CliError(f"nothing to lint: {robots.access_reason}")
-    issues = lint(robots.parsed, profile=args.profile, robots_url=url or args.robots_url)
+    report = lint_report(
+        robots.parsed,
+        profile=args.profile,
+        robots_url=url or args.robots_url,
+        inline_suppressions=not args.no_inline_ignores,
+    )
+    issues, suppressed = report.issues, report.suppressed
     if args.ignore:
         ignored = {c.strip() for c in ",".join(args.ignore).split(",") if c.strip()}
         issues = [i for i in issues if i.code not in ignored]
+        suppressed = [i for i in suppressed if i.code not in ignored]
     if args.format == "json":
-        ctx.stdout.write(to_json(envelope("lint", source=args.robots, issues=[i.to_dict() for i in issues])))
+        ctx.stdout.write(
+            to_json(
+                envelope(
+                    "lint",
+                    source=args.robots,
+                    issues=[i.to_dict() for i in issues],
+                    suppressed=[i.to_dict() for i in suppressed],
+                )
+            )
+        )
+    elif args.format == "sarif":
+        ctx.stdout.write(render_lint_sarif(issues, args.robots, suppressed))
+    elif args.format == "github":
+        ctx.stdout.write(render_lint_github(issues, args.robots))
     else:
-        ctx.stdout.write(render_lint_text(issues, args.robots))
+        ctx.stdout.write(render_lint_text(issues, args.robots, len(suppressed)))
     if args.fail_on == "never":
         return EXIT_OK
     return EXIT_FAIL if at_or_above(issues, args.fail_on) else EXIT_OK
@@ -213,9 +241,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="google",
         help="matching behaviour: google (default) or strict rfc (RFC 9309 only)",
     )
-    common.add_argument("--format", choices=("text", "json"), default="text", help="output format")
     common.add_argument("--timeout", type=float, default=10.0, help="fetch timeout in seconds (default 10)")
     common.add_argument("--max-bytes", type=int, default=MAX_BYTES, help=argparse.SUPPRESS)
+
+    fmt = argparse.ArgumentParser(add_help=False)
+    fmt.add_argument("--format", choices=("text", "json"), default="text", help="output format")
 
     ua = argparse.ArgumentParser(add_help=False)
     ua.add_argument(
@@ -234,7 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    t = sub.add_parser("test", parents=[common, ua], help="check whether URLs are allowed")
+    t = sub.add_parser("test", parents=[common, fmt, ua], help="check whether URLs are allowed")
     t.add_argument("robots", help="robots.txt file, '-' for stdin, or a site URL to fetch")
     t.add_argument("urls", nargs="*", help="URLs or paths to test")
     t.add_argument("--urls-file", help="file with one URL per line")
@@ -243,7 +273,13 @@ def build_parser() -> argparse.ArgumentParser:
     t.set_defaults(func=cmd_test)
 
     li = sub.add_parser("lint", parents=[common], help="find problems in a robots.txt")
-    li.add_argument("robots", help="robots.txt file, '-' for stdin, or a site URL to fetch")
+    li.add_argument("robots", nargs="?", help="robots.txt file, '-' for stdin, or a site URL to fetch")
+    li.add_argument(
+        "--format",
+        choices=("text", "json", "sarif", "github"),
+        default="text",
+        help="output format: text, json, sarif (code scanning) or github (workflow annotations)",
+    )
     li.add_argument(
         "--fail-on",
         choices=(*SEVERITIES, "never"),
@@ -252,9 +288,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     li.add_argument("--ignore", action="append", metavar="CODES", help="comma-separated issue codes to skip")
     li.add_argument("--robots-url", help="where the file is served, for sitemap host checks")
+    li.add_argument(
+        "--no-inline-ignores",
+        action="store_true",
+        help="report issues even when a '# robots-txt-lab: disable=...' comment silences them",
+    )
+    li.add_argument("--list-checks", action="store_true", help="list every check with its severity and exit")
     li.set_defaults(func=cmd_lint)
 
-    d = sub.add_parser("diff", parents=[common, ua], help="compare two robots.txt versions")
+    d = sub.add_parser("diff", parents=[common, fmt, ua], help="compare two robots.txt versions")
     d.add_argument("old", help="old robots.txt (file, '-' or URL)")
     d.add_argument("new", help="new robots.txt (file, '-' or URL)")
     d.add_argument("-u", "--url", action="append", help="URL or path to test; repeat for several")
@@ -262,14 +304,14 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--fail-on-change", action="store_true", help="exit 1 when any verdict changes")
     d.set_defaults(func=cmd_diff)
 
-    f = sub.add_parser("fetch", parents=[common], help="fetch a robots.txt and show how crawlers treat it")
+    f = sub.add_parser("fetch", parents=[common, fmt], help="fetch a robots.txt and show how crawlers treat it")
     f.add_argument("url", help="site URL or robots.txt URL")
     f.add_argument("--save", help="write the fetched body to this file")
     f.add_argument("--lint", action="store_true", help="also lint the fetched file")
     f.add_argument("--request-ua", help="User-Agent header for the request")
     f.set_defaults(func=cmd_fetch)
 
-    s = sub.add_parser("sitemaps", parents=[common], help="list the sitemap URLs")
+    s = sub.add_parser("sitemaps", parents=[common, fmt], help="list the sitemap URLs")
     s.add_argument("robots", help="robots.txt file, '-' for stdin, or a site URL to fetch")
     s.set_defaults(func=cmd_sitemaps)
     return parser

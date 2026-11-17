@@ -82,10 +82,17 @@ examples/          sample files, library script, CI workflow
 Add the check to `lint()` in `src/robots_txt_lab/lint.py` with a short,
 stable kebab-case code, a severity (`error` only for things that certainly
 break crawling) and a hint that says how to fix it. Add tests for a file that
-triggers it and one that does not, and list it in the README table.
+triggers it and one that does not, add it to the `CHECKS` catalog in the same
+module (the SARIF output and `--list-checks` read it) and list it in the README
+table; a test fails when a code is missing from either.
 
 ## Pull requests
 
 Keep pull requests focused on one change, describe what it does and why, and
 mention anything you could not test. By contributing you agree that your work
 is released under the MIT license of this project.
+
+## Code of conduct
+
+This project follows a [code of conduct](CODE_OF_CONDUCT.md). By taking part you
+agree to uphold it.

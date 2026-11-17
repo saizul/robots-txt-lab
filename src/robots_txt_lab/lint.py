@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from .agents import is_valid_token, product_token
@@ -12,6 +12,7 @@ from .models import Group, RobotsTxt, Rule
 from .parser import MAX_BYTES
 from .robots import Robots
 from .sitemaps import sitemap_problems
+from .suppress import apply_suppressions, parse_suppressions, unknown_codes
 
 ERROR = "error"
 WARNING = "warning"
@@ -36,6 +37,63 @@ class Issue:
             "message": self.message,
             "hint": self.hint,
         }
+
+
+#: Every check: code -> (default severity, short description). Used for ``--list-checks`` and SARIF rules.
+CHECKS: Dict[str, tuple] = {
+    "rule-outside-group": (ERROR, "allow/disallow before the first user-agent line is ignored"),
+    "blocks-entire-site": (ERROR, "Disallow: / blocks the whole site for a group"),
+    "absolute-url-rule": (ERROR, "a rule is written as a full URL instead of a path"),
+    "html-content": (ERROR, "the file looks like an HTML page, not robots.txt"),
+    "size-limit": (ERROR, "the file is larger than 500 KiB; the rest is ignored"),
+    "sitemap-not-absolute": (ERROR, "a sitemap URL is not absolute"),
+    "sitemap-bad-scheme": (ERROR, "a sitemap URL does not use http or https"),
+    "sitemap-invalid-url": (ERROR, "a sitemap URL cannot be parsed"),
+    "sitemap-empty": (ERROR, "a sitemap line has no URL"),
+    "blocks-resources": (WARNING, "a rule blocks CSS or JavaScript for Googlebot or the '*' group"),
+    "crawl-delay-ignored": (WARNING, "crawl-delay is ignored by Google"),
+    "noindex-unsupported": (WARNING, "noindex in robots.txt is not supported by Google"),
+    "unknown-directive": (WARNING, "a field no major crawler understands"),
+    "nonstandard-directive": (WARNING, "a non-standard field that Google ignores"),
+    "misspelled-directive": (WARNING, "a misspelled field name that only Google accepts"),
+    "missing-colon": (WARNING, "a line without ':' that only Google accepts"),
+    "invalid-line": (WARNING, "a line that is not a 'field: value' pair"),
+    "invalid-user-agent": (WARNING, "a user-agent value without a valid product token"),
+    "path-no-leading-slash": (WARNING, "a rule that does not start with '/' or '*' and never matches"),
+    "dollar-not-at-end": (WARNING, "'$' in the middle of a pattern is matched literally"),
+    "conflicting-rules": (WARNING, "allow and disallow for the same path"),
+    "not-utf8": (WARNING, "the file is not valid UTF-8"),
+    "size-near-limit": (WARNING, "the file is close to the 500 KiB limit"),
+    "sitemap-hash": (WARNING, "a sitemap URL contains a fragment"),
+    "sitemap-scheme-mismatch": (WARNING, "a sitemap URL uses a different scheme than robots.txt"),
+    "invalid-suppression": (
+        WARNING,
+        "a robots-txt-lab suppression comment that cannot be read or names an unknown code",
+    ),
+    "bom": (INFO, "the file starts with a UTF-8 byte order mark"),
+    "directive-case": (INFO, "unusual capitalisation of a field name"),
+    "path-case": (INFO, "paths are case-sensitive"),
+    "user-agent-token": (INFO, "only part of a user-agent value is used as the product token"),
+    "empty-group": (INFO, "a group without rules allows everything"),
+    "empty-rule": (INFO, "a rule without a path is ignored"),
+    "duplicate-rule": (INFO, "the same rule appears twice in a group"),
+    "redundant-wildcard": (INFO, "a trailing '*' is implied"),
+    "robots-txt-disallowed": (INFO, "/robots.txt is always allowed"),
+    "host-directive": (INFO, "host is a Yandex extension ignored by Google"),
+    "clean-param-directive": (INFO, "clean-param is a Yandex extension ignored by Google"),
+    "sitemap-duplicate": (INFO, "the same sitemap URL is listed twice"),
+    "sitemap-cross-host": (INFO, "a sitemap on another host than robots.txt"),
+    "no-groups": (INFO, "no user-agent groups, so everything is allowed"),
+    "unused-suppression": (INFO, "a robots-txt-lab suppression comment that silences nothing"),
+}
+
+
+@dataclass
+class LintReport:
+    """Result of :func:`lint_report`: reported issues and those silenced by inline comments."""
+
+    issues: List[Issue] = field(default_factory=list)
+    suppressed: List[Issue] = field(default_factory=list)
 
 
 #: Directives outside RFC 9309 that some crawlers read, and what Google does with them.
@@ -96,8 +154,72 @@ def _blocks_whole_site(group: Group) -> Optional[Rule]:
     return None
 
 
-def lint(robots_txt: RobotsTxt, *, profile: str = "google", robots_url: Optional[str] = None) -> List[Issue]:
-    """Run every check and return the issues, most severe first, then by line."""
+def _sort(issues: List[Issue]) -> None:
+    issues.sort(key=lambda i: (_RANK[i.severity], i.line if i.line is not None else 0, i.code))
+
+
+def lint(
+    robots_txt: RobotsTxt,
+    *,
+    profile: str = "google",
+    robots_url: Optional[str] = None,
+    inline_suppressions: bool = True,
+) -> List[Issue]:
+    """Run every check and return the issues, most severe first, then by line.
+
+    Issues silenced by ``# robots-txt-lab: disable=...`` comments are left out unless
+    ``inline_suppressions`` is false; use :func:`lint_report` to get them as well.
+    """
+    return lint_report(
+        robots_txt, profile=profile, robots_url=robots_url, inline_suppressions=inline_suppressions
+    ).issues
+
+
+def lint_report(
+    robots_txt: RobotsTxt,
+    *,
+    profile: str = "google",
+    robots_url: Optional[str] = None,
+    inline_suppressions: bool = True,
+) -> LintReport:
+    """Like :func:`lint`, but also return the issues silenced by inline suppression comments."""
+    issues = _run_checks(robots_txt, profile=profile, robots_url=robots_url)
+    if not inline_suppressions:
+        return LintReport(issues)
+    suppressions = parse_suppressions(robots_txt.lines)
+    if not suppressions:
+        return LintReport(issues)
+    kept, suppressed, used = apply_suppressions(issues, suppressions)
+    for line, text in suppressions.malformed:
+        kept.append(
+            Issue(
+                "invalid-suppression",
+                WARNING,
+                line,
+                f"suppression comment cannot be read: {text!r}",
+                "Write '# robots-txt-lab: disable=CODE[,CODE]', 'disable-next-line=...' or 'disable-file=...'.",
+            )
+        )
+    unknown = unknown_codes(suppressions, CHECKS)
+    for s, code in unknown:
+        kept.append(Issue("invalid-suppression", WARNING, s.line, f"suppression names an unknown check {code!r}"))
+    with_unknown = {s for s, _ in unknown}
+    for s in suppressions.items:
+        if s not in used and s not in with_unknown:
+            kept.append(
+                Issue(
+                    "unused-suppression",
+                    INFO,
+                    s.line,
+                    f"{s.kind}={','.join(s.codes)} does not silence any issue",
+                    "Remove the comment if the problem has been fixed.",
+                )
+            )
+    _sort(kept)
+    return LintReport(kept, suppressed)
+
+
+def _run_checks(robots_txt: RobotsTxt, *, profile: str, robots_url: Optional[str]) -> List[Issue]:
     issues: List[Issue] = []
     add = issues.append
     robots = Robots(robots_txt, profile)
@@ -404,7 +526,7 @@ def lint(robots_txt: RobotsTxt, *, profile: str = "google", robots_url: Optional
     for p in sitemap_problems(robots_txt, robots_url):
         add(Issue(p.kind, severity.get(p.kind, WARNING), p.line, f"{p.message}: {p.url!r}" if p.url else p.message))
 
-    issues.sort(key=lambda i: (_RANK[i.severity], i.line if i.line is not None else 0, i.code))
+    _sort(issues)
     return issues
 
 

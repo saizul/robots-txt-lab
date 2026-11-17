@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Inline suppression comments for the linter: `# robots-txt-lab: disable=CODES`
+  (same line), `disable-next-line=CODES` and `disable-file=CODES`, with `all`
+  as a wildcard. Suppressed issues no longer count for `--fail-on`; the text
+  summary counts them and JSON lists them under `suppressed`.
+- Two new checks: `invalid-suppression` (warning) for unreadable comments or
+  unknown codes, and `unused-suppression` (info) for comments that silence
+  nothing.
+- `lint --format sarif`: SARIF 2.1.0 output for GitHub code scanning, with one
+  rule per check and suppressed issues marked `inSource`.
+- `lint --format github`: GitHub Actions `::error` / `::warning` / `::notice`
+  annotations.
+- `lint --list-checks` and `lint --no-inline-ignores`.
+- `CHECKS` catalog, `lint_report()` / `LintReport` and `parse_suppressions()`
+  in the library API.
+- `examples/github-code-scanning.yml`; the pull request example now annotates
+  lint issues.
+- Code of conduct, issue forms and a pull request template.
+
+### Changed
+
+- `--format` choices are now per command: `lint` accepts `text`, `json`,
+  `sarif` and `github`; the other commands keep `text` and `json`.
+
 ## [0.1.0] - 2026-11-12
 
 First public release.
