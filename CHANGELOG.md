@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `redundant-allow` lint check (info): an `Allow` rule that no disallow rule could override has no effect,
+  which usually means a typo in the path or a disallow rule that was changed or removed. Groups that name the
+  same agent are merged as crawlers do; rules with wildcards are treated conservatively and `Allow: /` is not
+  reported.
 - Inline suppression comments for the linter: `# robots-txt-lab: disable=CODES`
   (same line), `disable-next-line=CODES` and `disable-file=CODES`, with `all`
   as a wildcard. Suppressed issues no longer count for `--fail-on`; the text
