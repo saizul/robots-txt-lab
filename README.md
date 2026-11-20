@@ -316,6 +316,7 @@ changes = diff(robots, Robots.from_text(new_text), ["/a", "/b?c=1"], ["Googlebot
 | `path-no-leading-slash`  | warning    | a rule that does not start with `/` or `*` and so never matches               |
 | `dollar-not-at-end`      | warning    | `$` in the middle of a pattern, which is literal                              |
 | `conflicting-rules`      | warning    | allow and disallow for the same path                                          |
+| `redundant-allow`        | info       | an allow rule with no disallow it could override (typo or stale rule?)        |
 | `not-utf8`, `size-near-limit`, `sitemap-hash`, `sitemap-scheme-mismatch` | warning | encoding, size and sitemap URL problems |
 | `bom`, `directive-case`, `path-case`, `user-agent-token`, `empty-group`, `empty-rule`, `duplicate-rule`, `redundant-wildcard`, `robots-txt-disallowed`, `host-directive`, `clean-param-directive`, `sitemap-duplicate`, `sitemap-cross-host`, `no-groups`, `unused-suppression` | info | worth knowing, rarely wrong |
 
@@ -337,7 +338,7 @@ $ ruff check . && ruff format --check .
 $ pytest
 ```
 
-The suite (418 tests) includes every example from RFC 9309 (sections 2.2.1 to 2.2.4 and 5) and from Google's robots.txt
+The suite (428 tests) includes every example from RFC 9309 (sections 2.2.1 to 2.2.4 and 5) and from Google's robots.txt
 specification page: the user-agent precedence table, rule grouping, the wildcard path table, the rule precedence
 table and the robots.txt URL validity table. Tests never touch the network; fetching uses a fake transport. CI runs
 lint, the tests on Python 3.10 to 3.13, a CLI smoke test and a Docker build.

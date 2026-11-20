@@ -78,6 +78,7 @@ CHECKS: Dict[str, tuple] = {
     "empty-rule": (INFO, "a rule without a path is ignored"),
     "duplicate-rule": (INFO, "the same rule appears twice in a group"),
     "redundant-wildcard": (INFO, "a trailing '*' is implied"),
+    "redundant-allow": (INFO, "an allow rule that no disallow rule could override, so it has no effect"),
     "robots-txt-disallowed": (INFO, "/robots.txt is always allowed"),
     "host-directive": (INFO, "host is a Yandex extension ignored by Google"),
     "clean-param-directive": (INFO, "clean-param is a Yandex extension ignored by Google"),
@@ -152,6 +153,62 @@ def _blocks_whole_site(group: Group) -> Optional[Rule]:
         if not r.allow and r.pattern in ("/", "/*", "*"):
             return r
     return None
+
+
+def _is_literal(pattern: str) -> bool:
+    return "*" not in pattern and "$" not in pattern
+
+
+def _allow_has_effect(allow: Rule, disallows: List[Rule]) -> bool:
+    """Whether ``allow`` wins against at least one disallow rule for some URL.
+
+    An allow rule only matters where a disallow rule also matches and is not more
+    specific (longer). For a literal allow path that means a disallow rule of at
+    most the same length that matches the allow path itself. Disallow rules with
+    wildcards are treated as overlapping whenever they are short enough, so the
+    check never reports an allow rule that might be needed.
+    """
+    for rule in disallows:
+        if rule.priority > allow.priority:
+            continue
+        if not _is_literal(rule.pattern) or allow.pattern.startswith(rule.pattern):
+            return True
+    return False
+
+
+def _redundant_allows(robots_txt: RobotsTxt) -> List[Issue]:
+    """Literal allow rules with no disallow rule to override, per user agent (groups merged as crawlers do)."""
+    issues: List[Issue] = []
+    for group in robots_txt.groups:
+        # Crawlers combine every group that names their token, so look at all of them.
+        merged = [
+            rule
+            for other in robots_txt.groups
+            if other is group or set(other.tokens) & set(group.tokens)
+            for rule in other.rules
+        ]
+        disallows = [r for r in merged if not r.allow]
+        for rule in group.rules:
+            if not rule.allow or rule.pattern == "/" or not _is_literal(rule.pattern):
+                continue
+            if _allow_has_effect(rule, disallows):
+                continue
+            names = ", ".join(group.agents) or "?"
+            if disallows:
+                message = f"{rule} has no effect for {names}: no shorter disallow rule covers it"
+            else:
+                message = f"{rule} has no effect for {names}: the group has no disallow rules"
+            issues.append(
+                Issue(
+                    "redundant-allow",
+                    INFO,
+                    rule.line,
+                    message,
+                    "Everything is allowed unless a disallow rule matches. Remove the line, or check "
+                    "the disallow rule it was meant to override (a typo or a longer path?).",
+                )
+            )
+    return issues
 
 
 def _sort(issues: List[Issue]) -> None:
@@ -488,6 +545,10 @@ def _run_checks(robots_txt: RobotsTxt, *, profile: str, robots_url: Optional[str
                         f"{whole} blocks everything for {names} except {len(allows)} allowed path(s)",
                     )
                 )
+
+    # -- allow rules without a disallow to override -------------------------
+    for issue in _redundant_allows(robots_txt):
+        add(issue)
 
     # -- CSS and JavaScript ----------------------------------------------------
     reported = set()
